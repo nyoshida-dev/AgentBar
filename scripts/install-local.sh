@@ -3,6 +3,8 @@
 # Build (or take an already-built) AgentBar.app and install it into /Applications.
 #
 #   scripts/install-local.sh            # Release build, ad-hoc sign, install, relaunch
+#   CONFIG=Personal scripts/install-local.sh
+#                                   # same, but the Personal configuration (updates off)
 #   scripts/install-local.sh --app PATH # install an existing .app (e.g. from release.sh)
 #
 # The app is not sandboxed, so there is no container to back up: preferences live in
@@ -12,6 +14,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP_NAME="AgentBar"
+CONFIG="${CONFIG:-Release}"
 DEST="/Applications/$APP_NAME.app"
 DERIVED_DATA="$ROOT/build/DerivedData"
 TEMP_DIR="$(mktemp -d)"
@@ -33,9 +36,9 @@ done
 
 # 1. Build if no app was supplied
 if [ -z "$APP_PATH" ]; then
-  info "Building Release..."
+  info "Building $CONFIG..."
   (cd "$ROOT" && xcodegen generate --use-cache --quiet)
-  if ! xcodebuild -project "$ROOT/$APP_NAME.xcodeproj" -scheme "$APP_NAME" -configuration Release \
+  if ! xcodebuild -project "$ROOT/$APP_NAME.xcodeproj" -scheme "$APP_NAME" -configuration "$CONFIG" \
        -destination 'platform=macOS' -derivedDataPath "$DERIVED_DATA" \
        CODE_SIGNING_ALLOWED=NO build > "$TEMP_DIR/build.log" 2>&1; then
     # `grep` finds nothing on some failures; with pipefail that must not end the script before `die`.
@@ -43,7 +46,7 @@ if [ -z "$APP_PATH" ]; then
     cp "$TEMP_DIR/build.log" "$ROOT/build/install-build-failed.log" 2>/dev/null || true
     die "xcodebuild failed (full log: build/install-build-failed.log)"
   fi
-  APP_PATH="$DERIVED_DATA/Build/Products/Release/$APP_NAME.app"
+  APP_PATH="$DERIVED_DATA/Build/Products/$CONFIG/$APP_NAME.app"
 fi
 [ -d "$APP_PATH" ] || die "App not found: $APP_PATH"
 

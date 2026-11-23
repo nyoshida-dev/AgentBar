@@ -38,14 +38,31 @@ final class UpdateController: NSObject, SPUUpdaterDelegate, SPUStandardUserDrive
         !(Bundle.main.object(forInfoDictionaryKey: "SUPublicEDKey") as? String ?? "").isEmpty
     }
 
+    /// A build can turn updates off without touching the feed. Absent or "NO" on the
+    /// upstream configurations; "YES" on a personal build that must not be replaced by
+    /// the public appcast. The key is generic so this file stays free of the app's name.
+    var updatesDisabled: Bool {
+        switch Bundle.main.object(forInfoDictionaryKey: "UpdatesDisabled") {
+        case let flag as Bool: return flag
+        case let number as NSNumber: return number.boolValue
+        case let flag as String: return ["yes", "true", "1"].contains(flag.lowercased())
+        default: return false
+        }
+    }
+
     var automaticallyChecksForUpdates: Bool {
         get { updater.automaticallyChecksForUpdates }
         set { updater.automaticallyChecksForUpdates = newValue }
     }
 
-    /// Starts Sparkle (never in tests, never without a public key). Safe to call once.
+    /// Starts Sparkle (never in tests, never when this build disabled updates, never without
+    /// a public key). Safe to call once.
     func start() {
         guard !isStarted, !ProcessInfo.processInfo.isRunningTests else { return }
+        guard !updatesDisabled else {
+            Log.updates.notice("updater not started: updates are disabled in this build")
+            return
+        }
         guard hasPublicKey else {
             Log.updates.notice("updater not started: SUPublicEDKey is empty")
             return

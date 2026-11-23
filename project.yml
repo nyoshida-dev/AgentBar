@@ -9,6 +9,13 @@ options:
   minimumXcodeGenVersion: "2.45.0"
   defaultSourceDirectoryType: syncedFolder
 
+# Personal is a Release-shaped local build. It keeps the provider code and turns
+# Sparkle off, with its own bundle id, so the public appcast cannot replace it.
+configs:
+  Debug: debug
+  Release: release
+  Personal: release
+
 settings:
   base:
     SWIFT_VERSION: "6.0"
@@ -22,8 +29,18 @@ settings:
     ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS: YES
     CURRENT_PROJECT_VERSION: "17"
     MARKETING_VERSION: "1.4.1"
+    # "NO" on Debug and Release. Personal sets YES and clears the Sparkle key.
+    UPDATES_DISABLED: "NO"
+    SPARKLE_PUBLIC_ED_KEY: "lXUV7eofupmNcuoyn/TLer94TTXPleMXFTKsDq13tjs="
   configs:
+    # Lowercase matches xcodegen's historical name for this spec; the capitalised
+    # names match the configurations declared above. Both stay so Release does not
+    # lose whole-module compilation if only one spelling is applied.
     release:
+      SWIFT_COMPILATION_MODE: wholemodule
+    Release:
+      SWIFT_COMPILATION_MODE: wholemodule
+    Personal:
       SWIFT_COMPILATION_MODE: wholemodule
 
 packages:
@@ -71,7 +88,10 @@ targets:
         # (`generate_keys --account agentbar`, see docs/RELEASING.md); the updater does not start
         # while it is empty.
         SUFeedURL: "https://github.com/aliyar/AgentBar/releases/latest/download/appcast.xml"
-        SUPublicEDKey: "lXUV7eofupmNcuoyn/TLer94TTXPleMXFTKsDq13tjs="
+        SUPublicEDKey: $(SPARKLE_PUBLIC_ED_KEY)
+        # Personal writes YES. UpdateController will not start Sparkle, and the public
+        # key above is empty in that configuration, so a feed cannot verify either.
+        UpdatesDisabled: $(UPDATES_DISABLED)
         SUEnableAutomaticChecks: true
         SUScheduledCheckInterval: 86400
     entitlements:
@@ -90,6 +110,11 @@ targets:
         ENABLE_HARDENED_RUNTIME: YES
         ENABLE_PREVIEWS: YES
         SWIFT_EMIT_LOC_STRINGS: YES
+      configs:
+        Personal:
+          PRODUCT_BUNDLE_IDENTIFIER: com.greatpixels.AgentBar.personal
+          UPDATES_DISABLED: "YES"
+          SPARKLE_PUBLIC_ED_KEY: ""
     scheme:
       testTargets:
         - AgentBarTests
@@ -128,6 +153,9 @@ targets:
         PRODUCT_NAME: AgentBarWidget
         ENABLE_HARDENED_RUNTIME: YES
         SKIP_INSTALL: YES
+      configs:
+        Personal:
+          PRODUCT_BUNDLE_IDENTIFIER: com.greatpixels.AgentBar.personal.Widget
         # Widget views are plain SwiftUI; the app's main-actor default is not wanted here.
         SWIFT_DEFAULT_ACTOR_ISOLATION: nonisolated
 

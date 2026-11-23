@@ -169,6 +169,17 @@ under account **`agentbar`**: always pass `--account agentbar` to `generate_keys
 To test against a local feed: `defaults write com.greatpixels.AgentBar UpdateFeedURL <url>`.
 An unsandboxed app needs neither `SUEnableInstallerLauncherService` nor mach-lookup exceptions.
 
+**Personal configuration.** `Personal` is a Release build with updates off, so a local copy
+is not replaced by the public appcast. It sets `UPDATES_DISABLED=YES` (Info.plist
+`UpdatesDisabled`), clears `SPARKLE_PUBLIC_ED_KEY`, and uses bundle ids
+`com.greatpixels.AgentBar.personal` and `com.greatpixels.AgentBar.personal.Widget`.
+Debug and Release are unchanged. `UpdateController` refuses to start when the flag is set,
+and Sparkle would also refuse an empty public key. Build it with `CONFIG=Personal`;
+`scripts/install-local.sh` honours `CONFIG` and still defaults to Release.
+Preferences move with the bundle id, so a personal install does not read the upstream
+app's settings. The product name stays AgentBar, so installing it into `/Applications`
+replaces `AgentBar.app`.
+
 ## The agents' files
 
 The formats are **undocumented and the agents' to change**. Every field is optional on the way
