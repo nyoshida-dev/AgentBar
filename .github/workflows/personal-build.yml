@@ -1,0 +1,129 @@
+# Personal build of this fork. Not part of the upstream AgentBar release.
+# Sparkle stays off: the Personal configuration clears the public key, sets
+# UpdatesDisabled, and turns SUEnableAutomaticChecks off.
+name: Personal build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - cursor/cursor-unified-devin-c61f
+
+permissions:
+  contents: write
+
+concurrency:
+  group: personal-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Require Swift 6.2 or newer
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          swift --version
+          ver=$(swift --version | sed -n 's/.*Swift version \([0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' | head -1)
+          major=${ver%%.*}
+          minor=${ver#*.}
+          echo "Parsed Swift $major.$minor"
+          if [ -z "$major" ] || [ "$major" -lt 6 ] || { [ "$major" -eq 6 ] && [ "$minor" -lt 2 ]; }; then
+            echo "Need Swift 6.2 or newer, got ${ver:-unknown}" >&2
+            exit 1
+          fi
+
+      - name: Install XcodeGen
+        run: HOMEBREW_NO_AUTO_UPDATE=1 brew install xcodegen
+
+      - name: Test AgentBarKit
+        run: swift test --package-path Packages/AgentBarKit
+
+      - name: Build the Personal configuration
+        run: |
+          set -euo pipefail
+          xcodegen generate --use-cache --quiet
+          xcodebuild \
+            -project AgentBar.xcodeproj \
+            -scheme AgentBar \
+            -configuration Personal \
+            -destination 'platform=macOS' \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: Ad-hoc sign
+        run: |
+          set -euo pipefail
+          SIGN_IDENTITY=- ./scripts/sign-app.sh \
+            build/DerivedData/Build/Products/Personal/AgentBar.app
+
+      - name: Confirm Sparkle is disabled
+        run: |
+          set -euo pipefail
+          plist="build/DerivedData/Build/Products/Personal/AgentBar.app/Contents/Info.plist"
+          id=$(plutil -extract CFBundleIdentifier raw "$plist")
+          version=$(plutil -extract CFBundleShortVersionString raw "$plist")
+          build=$(plutil -extract CFBundleVersion raw "$plist")
+          updates=$(plutil -extract UpdatesDisabled raw "$plist")
+          checks=$(plutil -extract SUEnableAutomaticChecks raw "$plist")
+          key=$(plutil -extract SUPublicEDKey raw "$plist" || true)
+          printf 'CFBundleIdentifier=%s\nCFBundleShortVersionString=%s\nCFBundleVersion=%s\nUpdatesDisabled=%s\nSUEnableAutomaticChecks=%s\nSUPublicEDKey=%s\n' \
+            "$id" "$version" "$build" "$updates" "$checks" "$key"
+          case "$updates" in
+            YES|yes|true|1) ;;
+            *) echo "UpdatesDisabled is not on" >&2; exit 1 ;;
+          esac
+          case "$checks" in
+            NO|no|false|0) ;;
+            *) echo "SUEnableAutomaticChecks is not off" >&2; exit 1 ;;
+          esac
+          if [ -n "$key" ]; then
+            echo "SUPublicEDKey is not empty" >&2
+            exit 1
+          fi
+
+      - name: Zip
+        run: |
+          set -euo pipefail
+          ditto -c -k --keepParent \
+            build/DerivedData/Build/Products/Personal/AgentBar.app \
+            AgentBar-personal.zip
+          ls -lh AgentBar-personal.zip
+          unzip -t AgentBar-personal.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AgentBar-personal
+          path: AgentBar-personal.zip
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Attach the zip to a prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="personal-$(date -u +%F)"
+          title="AgentBar personal $(date -u +%F)"
+          notes="Unsigned personal build from ${GITHUB_SHA}.
+
+          Bundle id com.greatpixels.AgentBar.personal. Sparkle does not run: UpdatesDisabled is YES, SUEnableAutomaticChecks is NO, and SUPublicEDKey is empty.
+
+          Not an upstream release. Unzip, replace /Applications/AgentBar.app, then right-click Open, or run: xattr -dr com.apple.quarantine /Applications/AgentBar.app"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" AgentBar-personal.zip --clobber
+          else
+            gh release create "$tag" AgentBar-personal.zip \
+              --prerelease \
+              --title "$title" \
+              --notes "$notes"
+          fi
+          echo "Download: https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}/AgentBar-personal.zip"
+          gh release view "$tag" --json url,tagName,isPrerelease,assets

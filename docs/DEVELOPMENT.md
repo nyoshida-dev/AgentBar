@@ -178,7 +178,10 @@ and Sparkle would also refuse an empty public key. Build it with `CONFIG=Persona
 `scripts/install-local.sh` honours `CONFIG` and still defaults to Release.
 Preferences move with the bundle id, so a personal install does not read the upstream
 app's settings. The product name stays AgentBar, so installing it into `/Applications`
-replaces `AgentBar.app`.
+replaces `AgentBar.app`. The same configuration is built without a local Xcode install by
+`.github/workflows/personal-build.yml` on this fork: a macOS 26 runner runs the package
+tests, builds Personal with signing disabled, ad-hoc signs, and attaches
+`AgentBar-personal.zip` to a prerelease tag `personal-YYYY-MM-DD`.
 
 ## The agents' files
 
