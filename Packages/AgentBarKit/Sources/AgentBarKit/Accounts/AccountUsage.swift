@@ -14,6 +14,8 @@ public enum AccountUsage {
     public enum Problem: Error, Equatable, Sendable {
         case notSignedIn
         case unauthorized
+        /// The editor's token is sealed and could not be opened. Nothing was sent.
+        case signInUnreadable
         case offline(String)
         /// 429: asked too often. `retryAfter` is the server's own word on when to ask
         /// again, when it gave one.
@@ -26,6 +28,7 @@ public enum AccountUsage {
             switch self {
             case .notSignedIn: "not signed in"
             case .unauthorized: "sign in again"
+            case .signInUnreadable: "could not read the sign-in"
             case .offline: "offline"
             case .rateLimited: "asked too often"
             case .badResponse(let code): "no answer (\(code))"
@@ -149,6 +152,7 @@ public enum AccountUsage {
         switch Credentials.cursorCredential(now: now) {
         case .absent: return .failure(.notSignedIn)
         case .expired: return .failure(.unauthorized)
+        case .locked: return .failure(.signInUnreadable)
         case .signedIn(let signIn):
             // A seat the editor already calls super or unified skips the monthly summary.
             // Anything else keeps the single summary read, unless that answer itself says
@@ -180,8 +184,9 @@ public enum AccountUsage {
     }
 
     private static func fetchUnified(_ signIn: Credentials.CursorSignIn, session: URLSession, now: Date) async -> Result<Reading, Problem> {
-        async let plan = send(CursorAPI.bearer(CursorAPI.planURL, token: signIn.accessToken), session: session, now: now)
-        async let period = send(CursorAPI.bearer(CursorAPI.periodURL, token: signIn.accessToken), session: session, now: now)
+        let bearer = Credentials.bearerToken(from: signIn.accessToken)
+        async let plan = send(CursorAPI.bearer(CursorAPI.planURL, token: bearer), session: session, now: now)
+        async let period = send(CursorAPI.bearer(CursorAPI.periodURL, token: bearer), session: session, now: now)
         let planAnswer = await plan
         let periodAnswer = await period
         // The server's own flag wins over the membership cached in the editor.
@@ -193,7 +198,7 @@ public enum AccountUsage {
                 return reading.isEmpty ? .failure(.unreadable) : .success(reading)
             }
         }
-        async let balance = send(CursorAPI.bearer(CursorAPI.balanceURL, token: signIn.accessToken), session: session, now: now)
+        async let balance = send(CursorAPI.bearer(CursorAPI.balanceURL, token: bearer), session: session, now: now)
         let status: Result<Data, Problem>?
         if let cookie = signIn.cookie {
             status = await send(CursorAPI.cookie(CursorAPI.usageStatusURL, cookie: cookie), session: session, now: now)

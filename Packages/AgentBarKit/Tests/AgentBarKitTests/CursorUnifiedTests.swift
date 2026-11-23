@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 import Testing
 @testable import AgentBarKit
 
@@ -165,6 +168,92 @@ struct CursorSignInTests {
         #expect(signIn.cookie?.contains("user_77") == true)
     }
 
+    /// Cursor 3 writes `cursor-safe-storage:v1:` plus a Chromium v10 blob. Sending that
+    /// string as a bearer is what came back as 401, "sign in again", while the plan badge
+    /// still read Super from the plaintext membership.
+    @Test func aSealedTokenIsNotSentUntilItIsOpened() async throws {
+        let now = Date(timeIntervalSince1970: 1_788_400_000)
+        let root = try TemporaryDirectory()
+        let sealed = "cursor-safe-storage:v1:djEwaTKn8QSpJ4aIH7pIsFHxMZXoxWvC8hfbRUPFq0/YaMY="
+        try writeCursorDatabase(at: root.url, rows: [
+            "cursorAuth/accessToken": sealed,
+            "cursorAuth/stripeMembershipType": "super",
+        ])
+        #expect(Credentials.cursorCredential(home: root.url, now: now, readKeychain: false) == .locked)
+        let report = await CursorDiagnostics.report(home: root.url, now: now, readKeychain: false)
+        #expect(report.contains("sealed v1"))
+        #expect(report.contains("session: sealed token was not opened"))
+        #expect(!report.contains(sealed))
+        #expect(report.contains("not sent") || report.contains("not asked"))
+    }
+
+    #if canImport(CommonCrypto)
+    @Test func theChromiumEnvelopeOpensToTheJWT() throws {
+        let stored = "cursor-safe-storage:v1:djEwaTKn8QSpJ4aIH7pIsFHxMZXoxWvC8hfbRUPFq0/YaMY="
+        #expect(CursorSafeStorage.open(stored, password: Data("test-password".utf8)) == "header.payload.sig")
+        let now = Date(timeIntervalSince1970: 1_788_400_000)
+        let live = jwt(exp: now.timeIntervalSince1970 + 3600)
+        let sealed = try #require(CursorSafeStorage.seal(live, password: Data("test-password".utf8)))
+        let root = try TemporaryDirectory()
+        try writeCursorDatabase(at: root.url, rows: [
+            "cursorAuth/accessToken": sealed,
+            "cursorAuth/stripeMembershipType": "super",
+        ])
+        guard case .signedIn(let signIn) = Credentials.cursorCredential(
+            home: root.url, now: now, storageKey: Data("test-password".utf8), readKeychain: false
+        ) else {
+            Issue.record("expected the sealed token to open")
+            return
+        }
+        #expect(signIn.accessToken == live)
+        #expect(signIn.looksUnified)
+        #expect(signIn.cookie == "WorkosCursorSessionToken=user_123%3A%3A\(live)")
+    }
+    #endif
+
+    @Test func theWorkOSUserIdIsTheSecondSubjectSegment() {
+        #expect(Credentials.userID(from: "auth0|user_123|extra") == "user_123")
+        #expect(Credentials.bearerToken(from: "user_1::aaa.bbb.ccc") == "aaa.bbb.ccc")
+        #expect(CursorDiagnostics.subjectHint("auth0|user_123") == "auth0|…(8)")
+    }
+
+    @Test func diagnosticsNameTheAnswerWithoutTheToken() async throws {
+        let now = Date(timeIntervalSince1970: 1_788_400_000)
+        let live = jwt(exp: now.timeIntervalSince1970 + 3600)
+        let root = try TemporaryDirectory()
+        try writeCursorDatabase(at: root.url, rows: [
+            "cursorAuth/accessToken": live,
+            "cursorAuth/stripeMembershipType": "super",
+            "cursorAuth/cachedEmail": "you@example.com",
+        ])
+        final class Stub: URLProtocol, @unchecked Sendable {
+            nonisolated(unsafe) static var body = Data(#"{"isMerged":true,"code":"ok"}"#.utf8)
+            override class func canInit(with request: URLRequest) -> Bool { true }
+            override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+            override func startLoading() {
+                let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil,
+                                               headerFields: ["Content-Type": "application/json"])!
+                client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+                client?.urlProtocol(self, didLoad: Self.body)
+                client?.urlProtocolDidFinishLoading(self)
+            }
+            override func stopLoading() {}
+        }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [Stub.self]
+        let session = URLSession(configuration: configuration)
+        let report = await CursorDiagnostics.report(home: root.url, now: now, session: session, readKeychain: false)
+        #expect(report.contains("exp=future"))
+        #expect(report.contains("sub=auth0|…(8)"))
+        #expect(report.contains("cookie: built"))
+        #expect(report.contains("-> 200"))
+        #expect(report.contains("isMerged"))
+        #expect(report.contains("cursorAuth/cachedEmail: present"))
+        #expect(!report.contains(live))
+        #expect(!report.contains("user_123"))
+        #expect(!report.contains("you@example.com"))
+    }
+
     private func writeCursorDatabase(at home: URL, rows: [String: String]) throws {
         let database = home.appendingPathComponent("Library/Application Support/Cursor/User/globalStorage/state.vscdb")
         try FileManager.default.createDirectory(at: database.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -184,7 +273,7 @@ struct CursorSignInTests {
 extension Credentials.CursorCredential: Equatable {
     public static func == (lhs: Self, rhs: Self) -> Bool {
         switch (lhs, rhs) {
-        case (.absent, .absent), (.expired, .expired): true
+        case (.absent, .absent), (.expired, .expired), (.locked, .locked): true
         case (.signedIn(let left), .signedIn(let right)):
             left.accessToken == right.accessToken && left.cookie == right.cookie && left.membership == right.membership
         default: false

@@ -133,6 +133,9 @@ public enum Credentials {
         case absent
         /// A token is there and every one of them is past its `exp`.
         case expired
+        /// A token is there but sealed, and the Keychain secret did not open it.
+        /// The ciphertext is not sent.
+        case locked
         case signedIn(CursorSignIn)
     }
 
@@ -143,21 +146,39 @@ public enum Credentials {
         return raw == "super" || raw.hasPrefix("unified")
     }
 
-    public static func cursorCredential(home: URL = HomeDirectory.url, now: Date = .now) -> CursorCredential {
+    public static func cursorCredential(home: URL = HomeDirectory.url, now: Date = .now,
+                                        storageKey: Data? = nil, readKeychain: Bool = true) -> CursorCredential {
         let database = home.appendingPathComponent("Library/Application Support/Cursor/User/globalStorage/state.vscdb")
         guard let db = SQLiteReader(reading: database) else { return .absent }
         defer { db.close() }
-        let access = cleaned(db.value(in: "ItemTable", key: "cursorAuth/accessToken"))
-        let refresh = cleaned(db.value(in: "ItemTable", key: "cursorAuth/refreshToken"))
+        let rawAccess = cleaned(db.value(in: "ItemTable", key: "cursorAuth/accessToken"))
+        let rawRefresh = cleaned(db.value(in: "ItemTable", key: "cursorAuth/refreshToken"))
         let userID = cleaned(db.value(in: "ItemTable", key: "cursorAuth/cachedUserId"))
             ?? cleaned(db.value(in: "ItemTable", key: "cursorAuth/userId"))
         let membership = cleaned(db.value(in: "ItemTable", key: "cursorAuth/stripeMembershipType"))
-        let tokens = [access, refresh].compactMap { $0 }
-        guard !tokens.isEmpty else { return .absent }
-        guard let token = tokens.first(where: { tokenIsUsable($0, now: now) }) else { return .expired }
+        let stored = [rawAccess, rawRefresh].compactMap { $0 }
+        guard !stored.isEmpty else { return .absent }
+        let sealed = stored.contains(where: CursorSafeStorage.isSealed)
+        let password = storageKey ?? (sealed && readKeychain ? CursorSafeStorage.keychainPassword(allowPrompt: true) : nil)
+        let opened = stored.compactMap { CursorSafeStorage.open($0, password: password) }.map(bearerToken(from:))
+        guard let token = opened.first(where: { tokenIsUsable($0, now: now) }) else {
+            if sealed && opened.isEmpty { return .locked }
+            return opened.isEmpty ? .absent : .expired
+        }
         return .signedIn(CursorSignIn(accessToken: token,
                                       cookie: cursorSessionCookie(accessToken: token, userID: userID, now: now),
                                       membership: membership))
+    }
+
+    /// The JWT to send as a bearer. A value already shaped as `userId::jwt` contributes
+    /// only the jwt; the joined form is the cookie, and the API rejects it as a bearer.
+    static func bearerToken(from token: String) -> String {
+        for separator in ["::", "%3A%3A"] {
+            guard let range = token.range(of: separator) else { continue }
+            let tail = String(token[range.upperBound...])
+            if tail.split(separator: ".").count >= 3 { return tail }
+        }
+        return token
     }
 
     /// Cursor keeps its session in the editor's state database. The website wants it as a
@@ -190,11 +211,15 @@ public enum Credentials {
         return "WorkosCursorSessionToken=\(userID)%3A%3A\(token)"
     }
 
-    /// The user id is the last segment of a WorkOS subject (`auth0|user_123` → `user_123`).
-    private static func userID(from subject: String) -> String? {
+    /// The user id is the second segment of a WorkOS subject (`auth0|user_123` →
+    /// `user_123`), which is what Cursor's own dashboard cookie uses. A subject with no
+    /// separator is already the id.
+    static func userID(from subject: String) -> String? {
         let subject = subject.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !subject.isEmpty else { return nil }
-        return subject.split(separator: "|").last.map(String.init) ?? subject
+        let parts = subject.split(separator: "|", omittingEmptySubsequences: false)
+        let id = parts.count > 1 ? parts[1] : parts[0]
+        return id.isEmpty ? nil : String(id)
     }
 
     /// A token with no readable expiry is still sent: Cursor's bearer calls accept it, and
