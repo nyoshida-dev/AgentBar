@@ -169,6 +169,20 @@ under account **`agentbar`**: always pass `--account agentbar` to `generate_keys
 To test against a local feed: `defaults write com.greatpixels.AgentBar UpdateFeedURL <url>`.
 An unsandboxed app needs neither `SUEnableInstallerLauncherService` nor mach-lookup exceptions.
 
+**Personal configuration.** `Personal` is a Release build with updates off, so a local copy
+is not replaced by the public appcast. It sets `UPDATES_DISABLED=YES` (Info.plist
+`UpdatesDisabled`), `SU_ENABLE_AUTOMATIC_CHECKS=NO`, clears `SPARKLE_PUBLIC_ED_KEY`, and uses bundle ids
+`com.greatpixels.AgentBar.personal` and `com.greatpixels.AgentBar.personal.Widget`.
+Debug and Release are unchanged. `UpdateController` refuses to start when the flag is set,
+and Sparkle would also refuse an empty public key. Build it with `CONFIG=Personal`;
+`scripts/install-local.sh` honours `CONFIG` and still defaults to Release.
+Preferences move with the bundle id, so a personal install does not read the upstream
+app's settings. The product name stays AgentBar, so installing it into `/Applications`
+replaces `AgentBar.app`. The same configuration is built without a local Xcode install by
+`.github/workflows/personal-build.yml` on this fork: a macOS 26 runner runs the package
+tests, builds Personal with signing disabled, ad-hoc signs, and attaches
+`AgentBar-personal.zip` to a prerelease tag `personal-YYYY-MM-DD`.
+
 ## The agents' files
 
 The formats are **undocumented and the agents' to change**. Every field is optional on the way
@@ -307,7 +321,9 @@ Claude Code writes `usage.json`, which it does not.
 |---|---|---|---|
 | Claude | Keychain item `Claude Code-credentials` via `/usr/bin/security find-generic-password -w`; else `~/.claude/.credentials.json` | `api.anthropic.com/api/oauth/usage` (header `anthropic-beta: oauth-2025-04-20`) | the `usage.json` shape, `ClaudeReader.reading(from:)` |
 | Codex | `~/.codex/auth.json` → `tokens.access_token`, `account_id` (only `auth_mode: chatgpt`; expired tokens are not used, never refreshed, since Codex refreshes its own file) | `chatgpt.com/backend-api/wham/usage` (header `ChatGPT-Account-Id`) | `rate_limit.primary_window/secondary_window`, `additional_rate_limits[]`, `credits` |
-| Cursor | `…/Cursor/User/globalStorage/state.vscdb` → `cursorAuth/accessToken`, sent as the cookie `WorkosCursorSessionToken=<user id>::<token>` | `cursor.com/api/usage-summary` | `individualUsage.plan` → `overall` → `teamUsage.pooled`, billing cycle |
+| Cursor | `…/Cursor/User/globalStorage/state.vscdb` → `cursorAuth/accessToken` (else a still-valid `refreshToken`; never refreshed). Cursor 3 may store that value sealed as `cursor-safe-storage:v1:`; it is decrypted in memory with the existing Keychain item `Cursor Safe Storage` / `Cursor Key` and the ciphertext is never sent. Cookie `WorkosCursorSessionToken=<user id>::<jwt>`, user id from the second `sub` segment | `cursor.com/api/usage-summary` for a legacy seat; bearer `api2.cursor.sh` for a merged seat | legacy: `individualUsage.plan` → `overall` → `teamUsage.pooled`. Merged: weekly pool, product shares, Additional usage, `usdRemainingCents` |
+| Cursor, unified (membership `super` or `unified…`, or `GetPlanInfo.isMerged`) | the same sign-in, as a bearer (`Authorization` + `Connect-Protocol-Version: 1`) and, when a user id is known, the same cookie | `api2.cursor.sh` `GetPlanInfo`, `GetCurrentPeriodUsage`, `GetComplatCreditBalance`; cookie GET `cursor.com/api/dashboard/v2/usage-status?scope=user` | one weekly pool (`totalPercentUsed`, or `weeklyIncludedUsage`), each product's share of that pool (`weeklyIncludedUsageByProduct`), Additional usage (`monthlyUsage`), credit balance (`usdRemainingCents`, shown at $0). Shapes follow OpenUsage (MIT); see `THIRD_PARTY_NOTICES` |
+| Devin | `~/.local/share/devin/credentials.toml` (`windsurf_api_key`, optional `api_server_url`), else `windsurfAuthStatus.apiKey` in the Devin app's `state.vscdb`. Read-only | `{api_server_url}/exa.seat_management_pb.SeatManagementService/GetUserStatus` (default `server.codeium.com`), POST, `Connect-Protocol-Version: 1` | daily and weekly quotas as percent used (`100 - remaining`), extra usage from `overageBalanceMicros`. A hidden daily quota is shown as Weekly when there is no weekly window |
 
 - **Why the `security` tool and not the Security framework**: Claude Code stores the item
   through `security`, so macOS trusts that tool to read it back silently. A direct

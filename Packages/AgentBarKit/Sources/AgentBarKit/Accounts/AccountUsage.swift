@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 /// Asks an agent's own account how much of each window is used - the only source that
 /// knows about the other machines and the time the agent was not running. One GET per
@@ -11,6 +14,8 @@ public enum AccountUsage {
     public enum Problem: Error, Equatable, Sendable {
         case notSignedIn
         case unauthorized
+        /// The editor's token is sealed and could not be opened. Nothing was sent.
+        case signInUnreadable
         case offline(String)
         /// 429: asked too often. `retryAfter` is the server's own word on when to ask
         /// again, when it gave one.
@@ -23,6 +28,7 @@ public enum AccountUsage {
             switch self {
             case .notSignedIn: "not signed in"
             case .unauthorized: "sign in again"
+            case .signInUnreadable: "could not read the sign-in"
             case .offline: "offline"
             case .rateLimited: "asked too often"
             case .badResponse(let code): "no answer (\(code))"
@@ -45,6 +51,8 @@ public enum AccountUsage {
 
     /// What the account reports, or why it could not be asked.
     public static func fetch(_ agent: Agent, session: URLSession = .shared, now: Date = .now) async -> Result<Reading, Problem> {
+        // Cursor's merged seat is several reads, not the one summary the other plans use.
+        if agent == .cursor { return await fetchCursor(session: session, now: now) }
         // Read once: the sign-in carries Claude's plan as well as its token.
         let claude = agent == .claude ? Credentials.claude() : nil
         guard let request = request(for: agent, now: now, claude: claude) else { return .failure(.notSignedIn) }
@@ -75,6 +83,7 @@ public enum AccountUsage {
         case .claude: ClaudeReader.reading(from: data, now: now)
         case .codex: codexReading(from: data)
         case .cursor: cursorReading(from: data)
+        case .devin: DevinAccount.reading(from: data)
         }
         // Claude states no plan in its usage answer; its sign-in does.
         if let plan = claude?.plan { reading.identity.plan = plan }
@@ -125,13 +134,113 @@ public enum AccountUsage {
             request = codex
         case .cursor:
             guard let cookie = Credentials.cursorSessionCookie(now: now) else { return nil }
-            request = URLRequest(url: URL(string: "https://cursor.com/api/usage-summary")!)
-            request.setValue(cookie, forHTTPHeaderField: "Cookie")
+            request = CursorAPI.cookie(CursorAPI.summaryURL, cookie: cookie)
+        case .devin:
+            guard let signIn = Credentials.devin() else { return nil }
+            request = DevinAccount.request(apiKey: signIn.apiKey, server: signIn.serverURL)
         }
         request.setValue(agent == .claude ? claudeUserAgent(version: claudeVersion()) : "AgentBar (macOS)",
                          forHTTPHeaderField: "User-Agent")
-        request.timeoutInterval = 10
+        if agent != .devin { request.timeoutInterval = 10 }
         return request
+    }
+
+    /// A legacy seat is still one GET of `usage-summary`. A merged seat (Cursor, X and Grok
+    /// on one weekly pool) is read the way Cursor's dashboard reads it. The sign-in is only
+    /// the editor's; it is never refreshed and never written back.
+    static func fetchCursor(session: URLSession, now: Date) async -> Result<Reading, Problem> {
+        switch Credentials.cursorCredential(now: now) {
+        case .absent: return .failure(.notSignedIn)
+        case .expired: return .failure(.unauthorized)
+        case .locked: return .failure(.signInUnreadable)
+        case .signedIn(let signIn):
+            // A seat the editor already calls super or unified skips the monthly summary.
+            // Anything else keeps the single summary read, unless that answer itself says
+            // the seat was merged.
+            if !signIn.looksUnified, let cookie = signIn.cookie {
+                let summary = await send(CursorAPI.cookie(CursorAPI.summaryURL, cookie: cookie), session: session, now: now)
+                switch summary {
+                case .failure(let problem):
+                    return .failure(problem)
+                case .success(let data):
+                    if !CursorUnified.summaryIsUnified(data) {
+                        let reading = cursorReading(from: data)
+                        return reading.isEmpty ? .failure(.unreadable) : .success(reading)
+                    }
+                    return await fetchUnified(signIn, session: session, now: now)
+                }
+            }
+            if signIn.looksUnified {
+                return await fetchUnified(signIn, session: session, now: now)
+            }
+            // A bearer with no user id cannot make the website cookie. One plan read tells
+            // a merged seat from a legacy one before any weekly figure is invented.
+            let plan = await send(CursorAPI.bearer(CursorAPI.planURL, token: signIn.accessToken), session: session, now: now)
+            if plan.data.flatMap(CursorUnified.mergedFlag(in:)) == true {
+                return await fetchUnified(signIn, session: session, now: now)
+            }
+            return .failure(plan.problem ?? .notSignedIn)
+        }
+    }
+
+    private static func fetchUnified(_ signIn: Credentials.CursorSignIn, session: URLSession, now: Date) async -> Result<Reading, Problem> {
+        let bearer = Credentials.bearerToken(from: signIn.accessToken)
+        async let plan = send(CursorAPI.bearer(CursorAPI.planURL, token: bearer), session: session, now: now)
+        async let period = send(CursorAPI.bearer(CursorAPI.periodURL, token: bearer), session: session, now: now)
+        let planAnswer = await plan
+        let periodAnswer = await period
+        // The server's own flag wins over the membership cached in the editor.
+        if planAnswer.data.flatMap(CursorUnified.mergedFlag(in:)) == false,
+           let cookie = signIn.cookie {
+            let summary = await send(CursorAPI.cookie(CursorAPI.summaryURL, cookie: cookie), session: session, now: now)
+            if case .success(let data) = summary, !CursorUnified.summaryIsUnified(data) {
+                let reading = cursorReading(from: data)
+                return reading.isEmpty ? .failure(.unreadable) : .success(reading)
+            }
+        }
+        async let balance = send(CursorAPI.bearer(CursorAPI.balanceURL, token: bearer), session: session, now: now)
+        let status: Result<Data, Problem>?
+        if let cookie = signIn.cookie {
+            status = await send(CursorAPI.cookie(CursorAPI.usageStatusURL, cookie: cookie), session: session, now: now)
+        } else {
+            status = nil
+        }
+        let balanceAnswer = await balance
+        let reading = CursorUnified.reading(period: periodAnswer.data, plan: planAnswer.data,
+                                            balance: balanceAnswer.data, status: status.flatMap(\.data))
+        if !reading.limits.isEmpty || reading.credits != nil {
+            var named = reading
+            if named.identity.plan == nil { named.identity.plan = Reading.planName(signIn.membership) }
+            return .success(named)
+        }
+        let problems = [planAnswer.problem, periodAnswer.problem, balanceAnswer.problem, status.flatMap(\.problem)].compactMap { $0 }
+        return .failure(preferred(problems) ?? .unreadable)
+    }
+
+    private static func send(_ request: URLRequest, session: URLSession, now: Date) async -> Result<Data, Problem> {
+        let data: Data, response: URLResponse
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch {
+            return .failure(.offline(error.localizedDescription))
+        }
+        let http = response as? HTTPURLResponse
+        let status = http?.statusCode ?? 0
+        if status == 401 || status == 403 { return .failure(.unauthorized) }
+        if status == 429 {
+            return .failure(.rateLimited(retryAfter: retryAfter(http?.value(forHTTPHeaderField: "Retry-After"), now: now)))
+        }
+        guard (200..<300).contains(status) else { return .failure(.badResponse(status)) }
+        return .success(data)
+    }
+
+    /// A refusal to the sign-in is the one worth saying; a later optional call failing
+    /// does not hide it.
+    private static func preferred(_ problems: [Problem]) -> Problem? {
+        if problems.contains(.unauthorized) { return .unauthorized }
+        if problems.contains(.notSignedIn) { return .notSignedIn }
+        if let limited = problems.first(where: { if case .rateLimited = $0 { return true }; return false }) { return limited }
+        return problems.first
     }
 
     /// The Claude Code version to name, when no session file names one. CodexBar's.
@@ -343,6 +452,18 @@ public enum AccountUsage {
                   let used = bucket.used, let limit = bucket.limit, limit > 0 else { continue }
             return used / limit * 100
         }
+        return nil
+    }
+}
+
+private extension Result where Success == Data, Failure == AccountUsage.Problem {
+    var data: Data? {
+        if case .success(let value) = self { return value }
+        return nil
+    }
+
+    var problem: AccountUsage.Problem? {
+        if case .failure(let value) = self { return value }
         return nil
     }
 }

@@ -24,6 +24,9 @@ extension Snapshot {
                 UsageLimit(agent: .codex, title: "Weekly · Spark", percentUsed: 5, resetsAt: now.addingTimeInterval(5 * 86400), windowLength: 7 * 86400, fullName: "GPT-5.3-Codex-Spark"),
                 UsageLimit(agent: .cursor, title: "Monthly", percentUsed: 63.5, resetsAt: now.addingTimeInterval(9 * 86400 + 5 * 3600), windowLength: 30 * 86400),
                 UsageLimit(agent: .cursor, title: "On-demand", percentUsed: 24, resetsAt: now.addingTimeInterval(9 * 86400 + 5 * 3600), windowLength: 30 * 86400),
+                UsageLimit(agent: .devin, title: "Daily", percentUsed: 18, resetsAt: now.addingTimeInterval(6 * 3600), windowLength: 86400),
+                UsageLimit(agent: .devin, title: "Weekly", percentUsed: 41, resetsAt: now.addingTimeInterval(3 * 86400), windowLength: 7 * 86400),
+                UsageLimit(agent: .devin, title: "Extra usage", percentUsed: 0, resetsAt: nil, amount: 42.5),
             ],
             conversations: [
                 Conversation(agent: .claude, id: "1", name: "Port the reader into the package and pin the file shapes",
@@ -49,7 +52,8 @@ extension Snapshot {
             credits: [.codex: Credits(balance: 12.4)],
             identities: [.claude: Identity(plan: "Max 20x", email: "you@example.com"),
                          .codex: Identity(plan: "Pro Lite", email: "you@example.com", name: "Your Name"),
-                         .cursor: Identity(plan: "Pro", email: "you@example.com")],
+                         .cursor: Identity(plan: "Pro", email: "you@example.com"),
+                         .devin: Identity(plan: "Max", email: "you@example.com")],
             resetCredits: [
                 // Claude names each kind; Codex's are all one kind and carry no label.
                 .claude: ResetCredits(credits: [

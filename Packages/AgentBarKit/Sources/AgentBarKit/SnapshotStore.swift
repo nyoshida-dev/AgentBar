@@ -7,7 +7,11 @@ public enum AppGroup {
 
     /// The group's container, or nil when the entitlement is missing.
     public static var container: URL? {
+        #if os(macOS)
         FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: id)
+        #else
+        nil
+        #endif
     }
 }
 

@@ -18,17 +18,17 @@ struct AppSettingsTests {
 
     /// A fresh install: every agent as declared, then what is running now.
     @Test func withNothingStoredTheOrderIsTheCanonicalOne() {
-        #expect(settings().sectionOrder == [.agent(.claude), .agent(.codex), .agent(.cursor), .conversations])
+        #expect(settings().sectionOrder == [.agent(.claude), .agent(.codex), .agent(.cursor), .agent(.devin), .conversations])
     }
 
     /// Dropping a row onto another takes that row's place; the rest shuffle to make room.
     @Test func droppingOntoARowTakesItsPlace() {
         let settings = settings()
         settings.move(.agent(.claude), onto: .conversations)
-        #expect(settings.sectionOrder == [.agent(.codex), .agent(.cursor), .conversations, .agent(.claude)])
+        #expect(settings.sectionOrder == [.agent(.codex), .agent(.cursor), .agent(.devin), .conversations, .agent(.claude)])
 
         settings.move(.conversations, onto: .agent(.codex))
-        #expect(settings.sectionOrder == [.conversations, .agent(.codex), .agent(.cursor), .agent(.claude)])
+        #expect(settings.sectionOrder == [.conversations, .agent(.codex), .agent(.cursor), .agent(.devin), .agent(.claude)])
     }
 
     /// The conversations block moves and hides like any other: it is a thing the panel
@@ -39,7 +39,7 @@ struct AppSettingsTests {
         #expect(settings.sections.first == .conversations)
         settings.setShown(.conversations, false)
         #expect(!settings.sections.contains(.conversations))
-        #expect(settings.sections == [.agent(.claude), .agent(.codex), .agent(.cursor)])
+        #expect(settings.sections == [.agent(.claude), .agent(.codex), .agent(.cursor), .agent(.devin)])
     }
 
     @Test func droppingARowOnItselfChangesNothing() {
@@ -53,7 +53,7 @@ struct AppSettingsTests {
         let first = AppSettings(defaults: defaults)
         first.move(.agent(.cursor), onto: .agent(.claude))
         #expect(AppSettings(defaults: defaults).sectionOrder
-                == [.agent(.cursor), .agent(.claude), .agent(.codex), .conversations])
+                == [.agent(.cursor), .agent(.claude), .agent(.codex), .agent(.devin), .conversations])
     }
 
     /// A block added by an update is in no stored list. It must appear rather than vanish,
@@ -69,7 +69,7 @@ struct AppSettingsTests {
     /// not leave a hole or an extra.
     @Test func aNameThatIsNoLongerABlockIsIgnored() {
         let settings = settings(["agent:gremlin", "conversations", "agent:claude"])
-        #expect(settings.sectionOrder == [.conversations, .agent(.claude), .agent(.codex), .agent(.cursor)])
+        #expect(settings.sectionOrder == [.conversations, .agent(.claude), .agent(.codex), .agent(.cursor), .agent(.devin)])
     }
 
     /// What the readers and the menu bar work from: the agents alone, in the same order.
@@ -77,7 +77,7 @@ struct AppSettingsTests {
         let settings = settings()
         settings.move(.agent(.cursor), onto: .agent(.claude))
         settings.setEnabled(.claude, false)
-        #expect(settings.agents == [.cursor, .codex])
+        #expect(settings.agents == [.cursor, .codex, .devin])
     }
 
     @Test func aSectionSurvivesARoundTripThroughItsName() {

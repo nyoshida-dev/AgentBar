@@ -27,6 +27,7 @@ public enum ProcessTree {
     /// Every process whose executable path contains `needle`, with its working directory.
     /// Answered by libproc; a process that refuses (another user's) is skipped.
     public static func processes(whosePathContains needle: String) -> [RunningProcess] {
+        #if os(macOS)
         var count = proc_listpids(UInt32(PROC_ALL_PIDS), 0, nil, 0)
         guard count > 0 else { return [] }
         var pids = [pid_t](repeating: 0, count: Int(count) / MemoryLayout<pid_t>.size + 64)
@@ -47,14 +48,29 @@ public enum ProcessTree {
             found.append(RunningProcess(pid: Int(pid), path: path, cwd: cwd))
         }
         return found
+        #else
+        _ = needle
+        return []
+        #endif
     }
 
     public static func parentPID(of pid: Int) -> Int? {
+        #if os(macOS)
         var info = kinfo_proc()
         var size = MemoryLayout<kinfo_proc>.stride
         var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid_t(pid)]
         guard sysctl(&mib, 4, &info, &size, nil, 0) == 0, size > 0 else { return nil }
         return Int(info.kp_eproc.e_ppid)
+        #else
+        // Linux has no sysctl kinfo_proc. /proc records the same parent.
+        guard let text = try? String(contentsOfFile: "/proc/\(pid)/status", encoding: .utf8) else { return nil }
+        for line in text.split(whereSeparator: \.isNewline) where line.hasPrefix("PPid:") {
+            guard let field = line.split(whereSeparator: \.isWhitespace).dropFirst().first,
+                  let parent = Int(field), parent > 0 else { return nil }
+            return parent
+        }
+        return nil
+        #endif
     }
 
     /// The application a conversation is running inside - iTerm, Terminal, an editor -

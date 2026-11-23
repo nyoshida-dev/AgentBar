@@ -175,6 +175,7 @@ struct StatusPageTests {
         #expect(Agent.claude.statusFeed.absoluteString == "https://status.claude.com/api/v2/summary.json")
         #expect(Agent.codex.statusFeed.absoluteString == "https://status.openai.com/api/v2/summary.json")
         #expect(Agent.cursor.statusFeed.absoluteString == "https://status.cursor.com/api/v2/summary.json")
+        #expect(Agent.devin.statusFeed.absoluteString == "https://www.devinstatus.com/api/v2/summary.json")
     }
 
     /// These pages are public: the request carries the app's name, the tag it was last

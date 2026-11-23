@@ -13,6 +13,7 @@ struct AgentGlyph: View {
         case .claude: "claude"
         case .codex: "codex"
         case .cursor: "cursor"
+        case .devin: nil
         }
     }
 
