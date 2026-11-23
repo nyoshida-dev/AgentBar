@@ -32,6 +32,9 @@ settings:
     # "NO" on Debug and Release. Personal sets YES and clears the Sparkle key.
     UPDATES_DISABLED: "NO"
     SPARKLE_PUBLIC_ED_KEY: "lXUV7eofupmNcuoyn/TLer94TTXPleMXFTKsDq13tjs="
+    # Sparkle reads this as a boolean. Personal sets NO so the built plist does not
+    # schedule checks even if the updater were started.
+    SU_ENABLE_AUTOMATIC_CHECKS: "YES"
   configs:
     # Lowercase matches xcodegen's historical name for this spec; the capitalised
     # names match the configurations declared above. Both stay so Release does not
@@ -92,7 +95,7 @@ targets:
         # Personal writes YES. UpdateController will not start Sparkle, and the public
         # key above is empty in that configuration, so a feed cannot verify either.
         UpdatesDisabled: $(UPDATES_DISABLED)
-        SUEnableAutomaticChecks: true
+        SUEnableAutomaticChecks: $(SU_ENABLE_AUTOMATIC_CHECKS)
         SUScheduledCheckInterval: 86400
     entitlements:
       path: Supporting/AgentBar.entitlements
@@ -115,6 +118,7 @@ targets:
           PRODUCT_BUNDLE_IDENTIFIER: com.greatpixels.AgentBar.personal
           UPDATES_DISABLED: "YES"
           SPARKLE_PUBLIC_ED_KEY: ""
+          SU_ENABLE_AUTOMATIC_CHECKS: "NO"
     scheme:
       testTargets:
         - AgentBarTests
@@ -153,11 +157,11 @@ targets:
         PRODUCT_NAME: AgentBarWidget
         ENABLE_HARDENED_RUNTIME: YES
         SKIP_INSTALL: YES
+        # Widget views are plain SwiftUI; the app's main-actor default is not wanted here.
+        SWIFT_DEFAULT_ACTOR_ISOLATION: nonisolated
       configs:
         Personal:
           PRODUCT_BUNDLE_IDENTIFIER: com.greatpixels.AgentBar.personal.Widget
-        # Widget views are plain SwiftUI; the app's main-actor default is not wanted here.
-        SWIFT_DEFAULT_ACTOR_ISOLATION: nonisolated
 
   AgentBarTests:
     type: bundle.unit-test

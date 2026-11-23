@@ -171,7 +171,7 @@ An unsandboxed app needs neither `SUEnableInstallerLauncherService` nor mach-loo
 
 **Personal configuration.** `Personal` is a Release build with updates off, so a local copy
 is not replaced by the public appcast. It sets `UPDATES_DISABLED=YES` (Info.plist
-`UpdatesDisabled`), clears `SPARKLE_PUBLIC_ED_KEY`, and uses bundle ids
+`UpdatesDisabled`), `SU_ENABLE_AUTOMATIC_CHECKS=NO`, clears `SPARKLE_PUBLIC_ED_KEY`, and uses bundle ids
 `com.greatpixels.AgentBar.personal` and `com.greatpixels.AgentBar.personal.Widget`.
 Debug and Release are unchanged. `UpdateController` refuses to start when the flag is set,
 and Sparkle would also refuse an empty public key. Build it with `CONFIG=Personal`;
