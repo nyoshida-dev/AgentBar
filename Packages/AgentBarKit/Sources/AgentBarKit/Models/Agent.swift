@@ -3,7 +3,7 @@ import Foundation
 /// A coding agent whose usage the app can show. Adding one means a folder, a way to read
 /// its limits, and nothing else: the views draw whatever comes back.
 public enum Agent: String, CaseIterable, Identifiable, Codable, Sendable, CodingKeyRepresentable {
-    case claude, codex, cursor
+    case claude, codex, cursor, devin
 
     public var id: String { rawValue }
 
@@ -12,6 +12,7 @@ public enum Agent: String, CaseIterable, Identifiable, Codable, Sendable, Coding
         case .claude: "Claude"
         case .codex: "Codex"
         case .cursor: "Cursor"
+        case .devin: "Devin"
         }
     }
 
@@ -21,6 +22,7 @@ public enum Agent: String, CaseIterable, Identifiable, Codable, Sendable, Coding
         case .claude: "asterisk"
         case .codex: "chevron.left.forwardslash.chevron.right"
         case .cursor: "cursorarrow.rays"
+        case .devin: "sparkles"
         }
     }
 
@@ -30,6 +32,7 @@ public enum Agent: String, CaseIterable, Identifiable, Codable, Sendable, Coding
         case .claude: ".claude"
         case .codex: ".codex"
         case .cursor: "Library/Application Support/Cursor"
+        case .devin: ".local/share/devin"
         }
     }
 
@@ -44,6 +47,7 @@ public enum Agent: String, CaseIterable, Identifiable, Codable, Sendable, Coding
         // Cursor moved its dashboard tabs from a query to a path in 2026; the old address
         // still redirects, but a redirect is a round trip and one day it will stop.
         case .cursor: URL(string: "https://cursor.com/dashboard/usage")!
+        case .devin: URL(string: "https://app.devin.ai/settings/usage")!
         }
     }
 
@@ -51,7 +55,16 @@ public enum Agent: String, CaseIterable, Identifiable, Codable, Sendable, Coding
     public var folderPath: String { "~/\(folderName)" }
 
     /// Whether the agent is on this Mac at all. One that is not installed is not shown.
-    public var isInstalled: Bool { FileManager.default.fileExists(atPath: defaultURL.path) }
+    /// Devin counts as installed when either the CLI's data folder or the app is present;
+    /// the sign-in may live in only one of them.
+    public var isInstalled: Bool {
+        if self == .devin {
+            let app = HomeDirectory.url.appendingPathComponent("Library/Application Support/Devin")
+            return FileManager.default.fileExists(atPath: defaultURL.path)
+                || FileManager.default.fileExists(atPath: app.path)
+        }
+        return FileManager.default.fileExists(atPath: defaultURL.path)
+    }
 
     /// Whether its folder can be read. Always true for an installed agent while the app is
     /// not sandboxed; kept as the one question to ask, for the day that changes.

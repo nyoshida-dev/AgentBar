@@ -12,10 +12,21 @@ let package = Package(
     targets: [
         .target(
             name: "AgentBarKit",
+            dependencies: [
+                // macOS imports SQLite3 from the SDK. Linux has the library and no module,
+                // so the system target below supplies one. It is not built on macOS.
+                .target(name: "CSQLite", condition: .when(platforms: [.linux])),
+            ],
             swiftSettings: [
                 .enableUpcomingFeature("NonisolatedNonsendingByDefault"),
                 .enableUpcomingFeature("InferIsolatedConformances"),
             ]
+        ),
+        .systemLibrary(
+            name: "CSQLite",
+            path: "Sources/CSQLite",
+            pkgConfig: "sqlite3",
+            providers: [.apt(["libsqlite3-dev"])]
         ),
         .testTarget(
             name: "AgentBarKitTests",

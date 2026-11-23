@@ -50,6 +50,9 @@ public extension Agent {
             [AgentLink("Cursor", URL(string: "https://cursor.com")!, symbol: "house"),
              AgentLink("Billing", URL(string: "https://cursor.com/dashboard/billing")!, symbol: "creditcard"),
              AgentLink("Cursor docs", URL(string: "https://docs.cursor.com")!, symbol: "book")]
+        case .devin:
+            [AgentLink("Devin", URL(string: "https://app.devin.ai")!, symbol: "house"),
+             AgentLink("Devin docs", URL(string: "https://docs.devin.ai")!, symbol: "book")]
         }
     }
 }

@@ -39,6 +39,14 @@ public extension ServiceStatus {
                              component("Cloud Agents", .operational),
                              component("cursor.com", .operational)],
                 updatedAt: now.addingTimeInterval(-2 * 86400), checkedAt: now.addingTimeInterval(-40))
+        case .devin:
+            return ServiceStatus(
+                level: .operational, description: "All Systems Operational",
+                components: [component("Cloud Agent", .operational, watched: true),
+                             component("Cloud Web Client", .operational),
+                             component("Desktop Agent", .operational, watched: true),
+                             component("Desktop Tab", .operational)],
+                updatedAt: now.addingTimeInterval(-3600), checkedAt: now.addingTimeInterval(-40))
         }
     }
 

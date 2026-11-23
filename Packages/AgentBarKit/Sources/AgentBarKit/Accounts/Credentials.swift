@@ -1,5 +1,9 @@
 import Foundation
+#if canImport(SQLite3)
 import SQLite3
+#elseif canImport(CSQLite)
+import CSQLite
+#endif
 
 /// The sign-ins the agents keep on this Mac, read the way the agents' own tools read them.
 /// Nothing is written back, nothing is logged, and a token lives only as long as the
@@ -111,14 +115,56 @@ public enum Credentials {
 
     // MARK: Cursor
 
+    /// What the editor's database holds for one signed-in seat. The token is used as a
+    /// bearer on Cursor's dashboard service and, when it names a user, as the session cookie
+    /// the website expects. Nothing is written back, and a refresh is never asked for:
+    /// trading the refresh token can invalidate the one Cursor itself keeps.
+    public struct CursorSignIn: Sendable {
+        public let accessToken: String
+        /// Nil when the token does not name a user. Bearer calls still work without it.
+        public let cookie: String?
+        /// `cursorAuth/stripeMembershipType`, raw: "pro", "super", "unified_ultra".
+        public let membership: String?
+        public var looksUnified: Bool { Credentials.membershipIsUnified(membership) }
+    }
+
+    public enum CursorCredential: Sendable {
+        /// No token in the editor's database.
+        case absent
+        /// A token is there and every one of them is past its `exp`.
+        case expired
+        case signedIn(CursorSignIn)
+    }
+
+    /// A merged Cursor, X and Grok seat. "super" is the SpaceXAI subscription the editor
+    /// caches; "unified…" is the membership the dashboard returns for the same seat.
+    static func membershipIsUnified(_ raw: String?) -> Bool {
+        guard let raw = raw?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(), !raw.isEmpty else { return false }
+        return raw == "super" || raw.hasPrefix("unified")
+    }
+
+    public static func cursorCredential(home: URL = HomeDirectory.url, now: Date = .now) -> CursorCredential {
+        let database = home.appendingPathComponent("Library/Application Support/Cursor/User/globalStorage/state.vscdb")
+        guard let db = SQLiteReader(reading: database) else { return .absent }
+        defer { db.close() }
+        let access = cleaned(db.value(in: "ItemTable", key: "cursorAuth/accessToken"))
+        let refresh = cleaned(db.value(in: "ItemTable", key: "cursorAuth/refreshToken"))
+        let userID = cleaned(db.value(in: "ItemTable", key: "cursorAuth/cachedUserId"))
+            ?? cleaned(db.value(in: "ItemTable", key: "cursorAuth/userId"))
+        let membership = cleaned(db.value(in: "ItemTable", key: "cursorAuth/stripeMembershipType"))
+        let tokens = [access, refresh].compactMap { $0 }
+        guard !tokens.isEmpty else { return .absent }
+        guard let token = tokens.first(where: { tokenIsUsable($0, now: now) }) else { return .expired }
+        return .signedIn(CursorSignIn(accessToken: token,
+                                      cookie: cursorSessionCookie(accessToken: token, userID: userID, now: now),
+                                      membership: membership))
+    }
+
     /// Cursor keeps its session in the editor's state database. The website wants it as a
     /// cookie: the user id (the tail of the token's subject) and the token, joined by "::".
     public static func cursorSessionCookie(home: URL = HomeDirectory.url, now: Date = .now) -> String? {
-        let database = home.appendingPathComponent("Library/Application Support/Cursor/User/globalStorage/state.vscdb")
-        guard let db = SQLiteReader(reading: database) else { return nil }
-        defer { db.close() }
-        guard let token = db.value(in: "ItemTable", key: "cursorAuth/accessToken") else { return nil }
-        return cursorSessionCookie(accessToken: token, now: now)
+        guard case .signedIn(let signIn) = cursorCredential(home: home, now: now) else { return nil }
+        return signIn.cookie
     }
 
     /// The account Cursor's editor has signed in, cached beside its token.
@@ -130,11 +176,98 @@ public enum Credentials {
                         email: db.value(in: "ItemTable", key: "cursorAuth/cachedEmail"))
     }
 
-    static func cursorSessionCookie(accessToken token: String, now: Date) -> String? {
-        guard let claims = JWT.claims(of: token), let subject = claims["sub"] as? String else { return nil }
+    static func cursorSessionCookie(accessToken token: String, userID explicit: String? = nil, now: Date) -> String? {
+        let token = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !token.isEmpty else { return nil }
         if let expiry = JWT.expiry(of: token), expiry < now { return nil }
-        let userID = subject.split(separator: "|").last.map(String.init) ?? subject
+        // Some builds store the cookie value itself (`user_…::jwt` or already escaped).
+        if token.contains("::") || token.contains("%3A%3A") {
+            let value = token.replacingOccurrences(of: "::", with: "%3A%3A")
+            return "WorkosCursorSessionToken=\(value)"
+        }
+        let fromSubject = JWT.claims(of: token).flatMap { $0["sub"] as? String }.flatMap(userID(from:))
+        guard let userID = cleaned(explicit) ?? fromSubject else { return nil }
         return "WorkosCursorSessionToken=\(userID)%3A%3A\(token)"
+    }
+
+    /// The user id is the last segment of a WorkOS subject (`auth0|user_123` → `user_123`).
+    private static func userID(from subject: String) -> String? {
+        let subject = subject.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !subject.isEmpty else { return nil }
+        return subject.split(separator: "|").last.map(String.init) ?? subject
+    }
+
+    /// A token with no readable expiry is still sent: Cursor's bearer calls accept it, and
+    /// treating "no exp" as signed-out was what left a live Super seat saying it was not.
+    private static func tokenIsUsable(_ token: String, now: Date) -> Bool {
+        guard let expiry = JWT.expiry(of: token) else { return true }
+        return expiry >= now
+    }
+
+    private static func cleaned(_ value: String?) -> String? {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else { return nil }
+        let stripped = value.trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+        return stripped.isEmpty ? nil : stripped
+    }
+
+    // MARK: Devin
+
+    public struct DevinSignIn: Sendable, Equatable {
+        public let apiKey: String
+        public let serverURL: URL
+    }
+
+    /// The sign-in `devin auth login` left on disk, then the Devin app's own database.
+    /// The first that holds a key wins. Nothing is written back.
+    public static func devin(home: URL = HomeDirectory.url) -> DevinSignIn? {
+        var files = [home.appendingPathComponent(".local/share/devin/credentials.toml"),
+                     home.appendingPathComponent("Library/Application Support/devin/credentials.toml")]
+        if let xdg = ProcessInfo.processInfo.environment["XDG_DATA_HOME"], !xdg.isEmpty {
+            files.insert(URL(fileURLWithPath: xdg).appendingPathComponent("devin/credentials.toml"), at: 0)
+        }
+        for file in files {
+            if let text = try? String(contentsOf: file, encoding: .utf8), let signIn = devin(toml: text) {
+                return signIn
+            }
+        }
+        let database = home.appendingPathComponent("Library/Application Support/Devin/User/globalStorage/state.vscdb")
+        guard let db = SQLiteReader(reading: database) else { return nil }
+        defer { db.close() }
+        guard let json = db.value(in: "ItemTable", key: "windsurfAuthStatus"),
+              let data = json.data(using: .utf8),
+              let key = JSONBox.dictionary(JSONBox.object(from: data))?["apiKey"] as? String else { return nil }
+        return devin(apiKey: key, server: nil)
+    }
+
+    /// `credentials.toml` as the CLI writes it: `windsurf_api_key` and an optional server.
+    static func devin(toml text: String) -> DevinSignIn? {
+        var fields: [String: String] = [:]
+        for line in text.split(whereSeparator: \.isNewline) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.isEmpty || trimmed.hasPrefix("#") { continue }
+            guard let eq = trimmed.firstIndex(of: "=") else { continue }
+            let key = trimmed[..<eq].trimmingCharacters(in: .whitespaces)
+            var value = trimmed[trimmed.index(after: eq)...].trimmingCharacters(in: .whitespaces)
+            if value.count >= 2, let quote = value.first, (quote == "\"" || quote == "'"), value.last == quote {
+                value = String(value.dropFirst().dropLast())
+            }
+            fields[String(key)] = String(value)
+        }
+        return devin(apiKey: fields["windsurf_api_key"] ?? "", server: fields["api_server_url"])
+    }
+
+    private static func devin(apiKey raw: String, server: String?) -> DevinSignIn? {
+        let key = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else { return nil }
+        let apiKey = key.hasPrefix(DevinAccount.sessionPrefix) || key.hasPrefix("cog_") || key.hasPrefix("apk_")
+            ? key : DevinAccount.sessionPrefix + key
+        let serverURL: URL
+        if let parsed = server.flatMap({ URL(string: $0) }), parsed.scheme == "https" {
+            serverURL = parsed
+        } else {
+            serverURL = DevinAccount.defaultServer
+        }
+        return DevinSignIn(apiKey: apiKey, serverURL: serverURL)
     }
 
 }
@@ -151,7 +284,6 @@ enum JWT {
     }
 
     static func expiry(of token: String) -> Date? {
-        guard let seconds = claims(of: token)?["exp"] as? Double else { return nil }
-        return Date(timeIntervalSince1970: seconds)
+        JSONBox.epoch(claims(of: token)?["exp"])
     }
 }

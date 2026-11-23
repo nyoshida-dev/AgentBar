@@ -15,18 +15,53 @@ public struct UsageLimit: Identifiable, Hashable, Codable, Sendable {
     /// What the title was shortened from, when it was: the row says "Weekly · Spark" and
     /// resting on it says which model that is.
     public let fullName: String?
+    /// A sum of money this row reports instead of a share of a window: additional usage
+    /// with no monthly cap, or Devin's extra-usage balance. Nil for an ordinary percent.
+    public let amount: Double?
 
     public init(agent: Agent, title: String, percentUsed: Double, resetsAt: Date?,
-                windowLength: TimeInterval? = nil, fullName: String? = nil) {
+                windowLength: TimeInterval? = nil, fullName: String? = nil, amount: Double? = nil) {
         self.agent = agent
         self.title = title
         self.percentUsed = percentUsed
         self.resetsAt = resetsAt
         self.windowLength = windowLength
         self.fullName = fullName
+        self.amount = amount
     }
 
+    /// The figure a row prints when this is a sum of money. Nil for a percent row, so a
+    /// caller falls back to `Format.percent`.
+    public var amountFigure: String? { amount.map { Format.money($0) } }
+
     public var id: String { "\(agent.rawValue)|\(title)" }
+
+    private enum CodingKeys: String, CodingKey {
+        case agent, title, percentUsed, resetsAt, windowLength, fullName, amount
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        agent = try container.decode(Agent.self, forKey: .agent)
+        title = try container.decode(String.self, forKey: .title)
+        percentUsed = try container.decode(Double.self, forKey: .percentUsed)
+        resetsAt = try container.decodeIfPresent(Date.self, forKey: .resetsAt)
+        windowLength = try container.decodeIfPresent(TimeInterval.self, forKey: .windowLength)
+        fullName = try container.decodeIfPresent(String.self, forKey: .fullName)
+        // Older snapshots have no amount. Missing is a percent row, not a decode failure.
+        amount = try container.decodeIfPresent(Double.self, forKey: .amount)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(agent, forKey: .agent)
+        try container.encode(title, forKey: .title)
+        try container.encode(percentUsed, forKey: .percentUsed)
+        try container.encodeIfPresent(resetsAt, forKey: .resetsAt)
+        try container.encodeIfPresent(windowLength, forKey: .windowLength)
+        try container.encodeIfPresent(fullName, forKey: .fullName)
+        try container.encodeIfPresent(amount, forKey: .amount)
+    }
 
     /// The window is one model's rather than the whole plan's: "Weekly · Fable".
     var isScoped: Bool { title.contains(" \u{00B7} ") }

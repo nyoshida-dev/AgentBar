@@ -12,7 +12,8 @@ enum MenuBarGauge {
         let live = snapshot.limits.filter { agents.contains($0.agent) }.compactMap { limit -> UsageLimit? in
             if !limit.hasRolledOver(by: now) { return limit }
             guard let end = limit.currentWindowEnd(now: now, activeSince: snapshot.latestActivity(for: limit.agent)) else { return nil }
-            return UsageLimit(agent: limit.agent, title: limit.title, percentUsed: 0, resetsAt: end, windowLength: limit.windowLength)
+            return UsageLimit(agent: limit.agent, title: limit.title, percentUsed: 0, resetsAt: end,
+                              windowLength: limit.windowLength, fullName: limit.fullName, amount: limit.amount)
         }
         var windows = chosen.isEmpty ? live.filter { $0.agent == .claude } : live.filter { chosen.contains($0.id) }
         if windows.isEmpty { windows = live }

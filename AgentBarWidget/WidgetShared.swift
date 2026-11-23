@@ -32,7 +32,8 @@ extension Snapshot {
         limits.compactMap { limit in
             if !limit.hasRolledOver(by: now) { return limit }
             guard let end = limit.currentWindowEnd(now: now, activeSince: latestActivity(for: limit.agent)) else { return nil }
-            return UsageLimit(agent: limit.agent, title: limit.title, percentUsed: 0, resetsAt: end, windowLength: limit.windowLength)
+            return UsageLimit(agent: limit.agent, title: limit.title, percentUsed: 0, resetsAt: end,
+                              windowLength: limit.windowLength, fullName: limit.fullName, amount: limit.amount)
         }
     }
 

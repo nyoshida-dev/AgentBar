@@ -2,7 +2,7 @@ import Foundation
 
 /// Where each agent says whether it is working, and which part of it we care about.
 ///
-/// Every one of the three publishes a Statuspage-v2-compatible summary, so there is one
+/// Each one publishes a Statuspage-v2-compatible summary, so there is one
 /// parser and three addresses. Verified against the live pages on 4 Sep 2026; see
 /// `docs/DEVELOPMENT.md` → "Service status" for the shapes and the traps.
 public extension Agent {
@@ -13,6 +13,8 @@ public extension Agent {
         case .claude: URL(string: "https://status.claude.com")!
         case .codex: URL(string: "https://status.openai.com")!
         case .cursor: URL(string: "https://status.cursor.com")!
+        // status.devin.ai redirects here. The summary feed is Atlassian's, like the others.
+        case .devin: URL(string: "https://www.devinstatus.com")!
         }
     }
 
@@ -36,6 +38,9 @@ public extension Agent {
         case .codex: ["Codex API"]
         // The two ways the agent is run here.
         case .cursor: ["CLI", "IDE"]
+        // The CLI and the desktop app run on these two. The enterprise twins are a
+        // different deployment and are not what a self-serve seat is waiting on.
+        case .devin: ["Cloud Agent", "Desktop Agent"]
         }
     }
 }

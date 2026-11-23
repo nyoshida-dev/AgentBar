@@ -39,6 +39,44 @@ enum FileTail {
     }
 }
 
+/// The loose JSON the account endpoints actually return: a number, a numeric string, or
+/// neither. Connect-protocol answers write cents as strings and leave zeros out.
+enum JSONBox {
+    static func object(from data: Data) -> [String: Any]? {
+        (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+    }
+
+    static func dictionary(_ value: Any?) -> [String: Any]? { value as? [String: Any] }
+
+    static func number(_ value: Any?) -> Double? {
+        switch value {
+        case let number as Double: return number
+        case let number as Int: return Double(number)
+        case let number as NSNumber:
+            // JSON booleans are their own object. 0 and 1 are real counts and must stay
+            // numbers; `is Bool` is true for both on some Foundation builds, so the class
+            // name is what tells a boolean apart.
+            if String(describing: type(of: number)).contains("Boolean") { return nil }
+            return number.doubleValue
+        case let text as String:
+            return Double(text.trimmingCharacters(in: .whitespacesAndNewlines))
+        default:
+            return nil
+        }
+    }
+
+    static func bool(_ value: Any?) -> Bool? {
+        value as? Bool
+    }
+
+    /// Epoch seconds, or milliseconds when the magnitude is plainly not seconds.
+    static func epoch(_ value: Any?) -> Date? {
+        guard let number = number(value) else { return nil }
+        let seconds = number > 10_000_000_000 ? number / 1000 : number
+        return Date(timeIntervalSince1970: seconds)
+    }
+}
+
 enum ISODate {
     static func parse(_ string: String?) -> Date? {
         guard let string else { return nil }

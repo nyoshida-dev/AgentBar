@@ -145,11 +145,12 @@ private struct UsageRow: View {
             TickMeter(fraction: rolledOver ? 0 : limit.percentUsed / 100, tint: tint, dimmed: dimmed)
             // A window that has started over has nothing spent in it yet: 0%, not a dash.
             // The dash stays on the time, since no one has written when the next one ends.
-            Text(rolledOver ? Format.percent(0) : Format.percent(limit.percentUsed))
+            Text(limit.amountFigure ?? Format.percent(rolledOver ? 0 : limit.percentUsed))
                 .font(.system(size: 9.5))
                 .monospacedDigit()
                 .foregroundStyle(!rolledOver && level == .hot ? tint : glass.tertiary)
-                .frame(width: 24, alignment: .trailing)
+                .frame(minWidth: limit.amount == nil ? 24 : 0, alignment: .trailing)
+                .fixedSize(horizontal: limit.amount != nil, vertical: false)
             Text(remaining ?? (rolledOver ? "-" : ""))
                 .font(.system(size: 12.5, weight: .regular))
                 .monospacedDigit()
@@ -175,6 +176,10 @@ private struct UsageRow: View {
 
     /// One line about it: what has been used of what, and when it starts over.
     private var tipDetail: String {
+        if let amount = limit.amount {
+            let named = limit.fullName.map { " \u{00B7} \($0)" } ?? ""
+            return "\(Format.money(amount))\(named)"
+        }
         if rolledOver, let remaining, windowEnd != nil {
             return "A new window started when the last one closed; the used figure arrives with the next read. Starts over \(showsClock ? "at" : "in") \(remaining)."
         }

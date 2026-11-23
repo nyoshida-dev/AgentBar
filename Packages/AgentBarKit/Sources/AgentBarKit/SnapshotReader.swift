@@ -25,6 +25,10 @@ public enum SnapshotReader {
                 // account it is signed in as, and its chats.
                 snapshot.take(CursorReader.read(), for: .cursor)
                 snapshot.conversations += CursorReader.conversations(home: HomeDirectory.url, now: now)
+            case .devin:
+                // Devin leaves its sign-in on disk and its quota on the account. There is
+                // no local transcript to list.
+                break
             }
         }
         snapshot.conversations = snapshot.conversations.sortedByActivity()
